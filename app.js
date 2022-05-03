@@ -1,14 +1,7 @@
-//Level1 -> just creating user with schema and model
-
-// //dotenv = Level2
-// require('dotenv').config(); //must be on top
-
-// //md5 = Level3
-// const md5 = require('md5');
-
-//bcrypt = Level4
-const bcrypt = require('bcrypt');
-const saltRounds = 10;
+//express-session + passport = Level5
+const session = require('express-session');
+const passport = require('passport');
+const passportLocalMongoose = require('passport-local-mongoose');
 
 //express
 const express = require('express');
@@ -24,10 +17,20 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const ejs = require('ejs');
 app.set('view engine', 'ejs'); //views
 
-//mongoose + encryption
+//part of express-session + passport => MUST be after every require BUT before mongoose.connect
+app.use(session({
+  secret: 'Our little secret.',
+  resave: false,
+  saveUninitialized: true,
+//   cookie: { secure: true }
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+//mongoose 
 const mongoose = require('mongoose');
 mongoose.connect('mongodb://localhost:27017/secretsDB');
-// const encrypt = require('mongoose-encryption');
 
     //Schema
     const userSchema = new mongoose.Schema({
@@ -35,13 +38,14 @@ mongoose.connect('mongodb://localhost:27017/secretsDB');
         password: String
     });
 
-    // //Encryption Secret = this MUST be before Model
-    // userSchema.plugin(encrypt, { secret: process.env.SECRET, encryptedFields: ['password'] });
-    //                                         //dotenv
+    userSchema.plugin(passportLocalMongoose) //part of passport-local-mongoose
 
     //Model
     const User = mongoose.model("User", userSchema);
 
+    passport.use(User.createStrategy());            //part of passport
+    passport.serializeUser(User.serializeUser());
+    passport.deserializeUser(User.deserializeUser());
 
 //routes ----------------------------------------------
 
@@ -53,46 +57,54 @@ app.get('/login', (req, res) => {
     res.render('login');
 });
 
+app.get('/secrets', (req, res) => {
+    if (req.isAuthenticated()) {
+        res.render('secrets');
+    } else {
+        res.redirect('/login')
+    }
+});
+
+app.get('/logout', (req, res) => {
+    req.logout();
+    res.redirect('/');
+});
+
 app.get('/register', (req, res) => {
     res.render('register');
 });
 
 app.post('/register', (req, res) => {
 
-    bcrypt.hash(req.body.password, saltRounds, function(err, hash) {
-        const newUser = new User({
-            email: req.body.username,
-            password: hash
-        });
-        newUser.save((err) => {
-            if (err) {
-                console.log(err);
-            } else {
-                res.render('secrets'); //we dont have route for secrets because secrets is just for registered people
-            }
-        });
-    });
+    User.register({username: req.body.username}, req.body.password, (err, user) => {
+        if (err) {
+            console.log(err)
+            res.redirect('/register')
+        } else {
+            passport.authenticate('local')(req, res, () => {
+                res.redirect('/secrets');
+            });
+        }
+    })
+    
 });
 
 app.post('/login', (req, res) => {
 
-    const username = req.body.username;
-    const password = req.body.password;
-    
-    User.findOne({email: username}, (err, foundUser) => {
+    const user = new User({
+        username: req.body.username,
+        password: req.body.password
+    });
+
+    req.login(user, (err) => {
         if (err) {
             console.log(err)
         } else {
-            if (foundUser) {
-                
-                bcrypt.compare(password, foundUser.password, function(err, result) {
-                    if (result === true) {
-                        res.render('secrets'); //we dont have route for secrets because secrets is just for registered people
-                    }
-                });   
-            }
+            passport.authenticate('local')(req, res, () => {
+                res.redirect('/secrets');
+            });
         }
-    })
+    });  
 });
 
 //------ ----------------------------------------------
